@@ -1,64 +1,91 @@
 # agy-acp
 
-ACP (Agent Client Protocol) adapter for [Antigravity CLI](https://github.com/google-antigravity/antigravity-cli). Bridges `agy` into OpenAB's stdio JSON-RPC protocol.
+An [Agent Client Protocol (ACP)](https://agentclientprotocol.com) stdio adapter for [Google Antigravity CLI](https://github.com/google-antigravity/antigravity-cli) (`agy`). It bridges `agy` into any ACP-compatible host like [Zed](https://zed.dev), enabling you to use Gemini models through `agy` inside Zed's Agent Panel.
 
-## How it works
+## How It Works
+
+`agy-acp` speaks JSON-RPC over stdin/stdout (the ACP transport). When a host like Zed sends a prompt, `agy-acp` spawns `agy` as a subprocess, streams the response back as incremental `session/update` notifications, and persists session state across restarts so you can resume conversations.
 
 ```
-openab ──JSON-RPC──► agy-acp ──spawns──► agy -p "prompt"
-                        │
-                        ├─ Tracks conversation IDs via SQLite .db files
-                        ├─ Extracts responses from protobuf step_payload (field 20.1)
-                        └─ Persists session state for multi-turn conversations
+Zed (ACP host)  <--stdin/stdout JSON-RPC-->  agy-acp  <--subprocess-->  agy  <--API-->  Gemini
 ```
 
-## Build
+## Prerequisites
+
+- **Rust** (1.70+) with Cargo
+- **`agy`** installed and in your `PATH` — install from [google-antigravity/antigravity-cli releases](https://github.com/google-antigravity/antigravity-cli)
+- **Authentication** — either set `GEMINI_API_KEY` or configure auth via `~/.gemini/antigravity-cli/settings.json`
+
+## Build & Install
 
 ```bash
 cargo build --release
 ```
 
-## Tests
+The binary is at `target/release/agy-acp`. Copy it somewhere in your `PATH`:
 
 ```bash
-# Unit tests
-cargo test
-
-# All tests including filesystem I/O tests
-cargo test -- --include-ignored
-
-# E2E test (requires agy in PATH + auth)
-cargo test e2e -- --ignored --nocapture
+cp target/release/agy-acp /usr/local/bin/
 ```
 
-### E2E requirements
+## Use with Zed
 
-The E2E test spawns `agy-acp` → `agy` and verifies a full round-trip prompt/response.
+Add `agy-acp` as a custom agent server in your Zed settings (`~/.config/zed/settings.json`):
 
-| Requirement | Local dev | CI |
-|---|---|---|
-| `agy` binary | `~/.local/bin/agy` | Downloaded from GitHub release |
-| Auth | macOS Keychain (existing login) | `GEMINI_API_KEY` env var |
-
-**Local setup:**
-```bash
-# Install agy v1.0.4+
-gh release download 1.0.4 --repo google-antigravity/antigravity-cli \
-  --pattern "agy_cli_mac_arm64.tar.gz" --dir /tmp
-tar -xzf /tmp/agy_cli_mac_arm64.tar.gz -C ~/.local/bin/
-ln -sf ~/.local/bin/antigravity ~/.local/bin/agy
-
-# Run e2e
-export PATH="$HOME/.local/bin:$PATH"
-cargo test e2e -- --ignored --nocapture
+```json
+{
+  "agent_servers": {
+    "agy": {
+      "type": "custom",
+      "command": "agy-acp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
 ```
 
-**CI:** The GitHub Actions workflow (`.github/workflows/e2e-agy-acp.yml`) handles everything automatically. It uses the `GEMINI_API_KEY` repo secret.
+Then open the Agent Panel in Zed (`Cmd-?` on macOS, `Ctrl-?` on Linux), select **agy** from the agent dropdown, and start chatting.
 
-### Updating the API key
+### Model Selection
 
-```bash
-gh secret set GEMINI_API_KEY --repo openabdev/openab
+`agy-acp` queries available models by running `agy models` at startup. You can switch models from Zed's model selector in the agent thread — the adapter exposes them as ACP config options.
+
+### Passing Extra Arguments
+
+Set the `AGY_EXTRA_ARGS` environment variable to pass additional arguments to every `agy` invocation:
+
+```json
+{
+  "agent_servers": {
+    "agy": {
+      "type": "custom",
+      "command": "agy-acp",
+      "args": [],
+      "env": {
+        "AGY_EXTRA_ARGS": "--some-flag value"
+      }
+    }
+  }
+}
 ```
 
-Get a free key from https://aistudio.google.com/apikey — the e2e sends one short prompt per run so cost is negligible.
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `GEMINI_API_KEY` | API key for Gemini (passed through to `agy`) |
+| `AGY_EXTRA_ARGS` | Space-separated extra args passed to every `agy` invocation |
+| `OPENAB_TOOL_DISPLAY` | Set to `"full"` to disable narration filtering; default filters "I will ..." prefixes |
+
+## Session Persistence
+
+Sessions are persisted to `~/.openab/agy-acp/sessions.json`. When you resume a session in Zed, `agy-acp` restores the conversation binding and replays the message history from `agy`'s SQLite conversation databases (`~/.gemini/antigravity-cli/conversations/*.db`).
+
+## Debugging
+
+To inspect the JSON-RPC messages between Zed and `agy-acp`, run `dev: open acp logs` from Zed's Command Palette.
+
+## License
+
+MIT
