@@ -142,7 +142,8 @@ pub fn extract_printable_strings(blob: &[u8]) -> Vec<String> {
 }
 
 fn looks_like_tool_name(s: &str) -> bool {
-    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    s.len() >= 2
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         && (s.contains('_') || s.chars().any(|c| c.is_ascii_uppercase()))
         && s.len() <= 64
 }
@@ -266,12 +267,16 @@ pub fn extract_tool_update_from_step_payload(
             looks_like_tool_name(trimmed).then(|| trimmed.to_string())
         })
         .or_else(|| strings.iter().find_map(|s| extract_tool_name(s)));
-    let title = raw_input
+    let title_from_input = raw_input
         .as_ref()
         .and_then(|v| v.get("toolSummary").or_else(|| v.get("toolAction")))
         .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| name.clone())?;
+        .map(String::from);
+    let fallback_kind = name.as_deref().map(tool_kind).unwrap_or("other");
+    if title_from_input.is_none() && fallback_kind == "other" {
+        return None;
+    }
+    let title = title_from_input.or_else(|| name.clone())?;
     let name_kind = name.as_deref().map(tool_kind).unwrap_or("other");
     let title_kind = tool_kind(&title);
     let kind = if title_kind == "other" {

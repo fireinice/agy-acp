@@ -154,6 +154,18 @@ fn test_extract_tool_update_uses_tool_name_fallback() {
 }
 
 #[test]
+fn test_extract_tool_update_ignores_single_letter_noise() {
+    let payload = b"P";
+    assert_eq!(extract_tool_update_from_step_payload(4, 17, payload), None);
+}
+
+#[test]
+fn test_extract_tool_update_ignores_generic_message_fallback() {
+    let payload = b"Message";
+    assert_eq!(extract_tool_update_from_step_payload(5, 17, payload), None);
+}
+
+#[test]
 fn test_extract_tool_update_parses_first_balanced_json_object() {
     let payload = br#"
         abc123 view_file
