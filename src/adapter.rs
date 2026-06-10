@@ -675,6 +675,7 @@ impl Adapter {
             had_updates: false,
             agent_text_lengths: HashMap::new(),
             emitted_tool_steps: HashSet::new(),
+            last_title: None,
         }));
         let stop_polling = Arc::new(AtomicBool::new(false));
         let poll_conversations_dir = self.conversations_dir.clone();

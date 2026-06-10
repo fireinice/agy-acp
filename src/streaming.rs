@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::db::{new_conversation_id_in_dir, read_rows_from_db};
 use crate::protobuf::{
-    extract_text_from_step_payload, extract_tool_update_from_step_payload, is_tool_step_type,
+    extract_text_from_step_payload, extract_title_from_step_payload,
+    extract_tool_update_from_step_payload, is_tool_step_type,
 };
 use crate::types::{JsonRpcNotification, StreamingState};
 
@@ -67,6 +68,28 @@ pub fn poll_streaming_delta(
                     .unwrap(),
                 );
             }
+        } else if step_type == 23 {
+            let Some(title) = extract_title_from_step_payload(&payload) else {
+                continue;
+            };
+            if guard.last_title.as_deref() == Some(title.as_str()) {
+                continue;
+            }
+            guard.last_title = Some(title.clone());
+            notifications.push(
+                serde_json::to_string(&JsonRpcNotification {
+                    jsonrpc: "2.0",
+                    method: "session/update".to_string(),
+                    params: json!({
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "session_info_update",
+                            "title": title,
+                        },
+                    }),
+                })
+                .unwrap(),
+            );
         } else if is_tool_step_type(step_type) && !guard.emitted_tool_steps.contains(&idx) {
             if let Some(update) = extract_tool_update_from_step_payload(idx, step_type, &payload) {
                 guard.emitted_tool_steps.insert(idx);

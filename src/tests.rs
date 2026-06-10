@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use crate::adapter::{filter_narration, Adapter};
 use crate::protobuf::{
-    extract_text_from_step_payload, extract_tool_name, extract_tool_update_from_step_payload,
-    extract_user_text_from_step_payload, read_varint,
+    extract_text_from_step_payload, extract_title_from_step_payload, extract_tool_name,
+    extract_tool_update_from_step_payload, extract_user_text_from_step_payload, read_varint,
 };
 
 fn push_varint(out: &mut Vec<u8>, mut value: u64) {
@@ -50,6 +50,15 @@ fn make_user_payload(text: &str) -> Vec<u8> {
     outer
 }
 
+fn make_title_payload(title: &str) -> Vec<u8> {
+    let mut title_update = Vec::new();
+    push_len_field(&mut title_update, 4, title.as_bytes());
+
+    let mut outer = Vec::new();
+    push_len_field(&mut outer, 30, &title_update);
+    outer
+}
+
 #[test]
 fn test_extract_text_from_step_payload_field20_field1() {
     let mut inner = Vec::new();
@@ -77,6 +86,23 @@ fn test_extract_user_text_from_step_payload_field19_field2() {
     assert_eq!(
         extract_user_text_from_step_payload(&payload),
         Some("how are you?".to_string())
+    );
+}
+
+#[test]
+fn test_extract_title_from_step_payload_field30_field4() {
+    let payload = make_title_payload("Documenting Conversation Snapshot Function");
+    assert_eq!(
+        extract_title_from_step_payload(&payload),
+        Some("Documenting Conversation Snapshot Function".to_string())
+    );
+}
+
+#[test]
+fn test_extract_title_ignores_empty_title() {
+    assert_eq!(
+        extract_title_from_step_payload(&make_title_payload("  ")),
+        None
     );
 }
 
@@ -116,6 +142,9 @@ fn test_extract_tool_update_from_step_payload_json() {
 }
 
 #[test]
+/// Tests that when a tool payload lacks a JSON body (and thus has no `toolSummary`
+/// or `toolAction`), the extractor falls back to using the extracted tool name
+/// (e.g., `view_file`) as the update title.
 fn test_extract_tool_update_uses_tool_name_fallback() {
     let payload = b"view_file";
     let update = extract_tool_update_from_step_payload(3, 8, payload).unwrap();

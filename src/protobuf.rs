@@ -76,6 +76,13 @@ pub fn extract_user_text_from_step_payload(blob: &[u8]) -> Option<String> {
         .filter(|text| !text.trim().is_empty())
 }
 
+/// Extract a generated conversation title from a step type 23 payload:
+/// top-level field 30 (sub-message) -> field 4 (string).
+pub fn extract_title_from_step_payload(blob: &[u8]) -> Option<String> {
+    let title_update = get_proto_field(blob, 30)?;
+    get_text_field(&title_update, 4).filter(|title| !title.trim().is_empty())
+}
+
 pub fn extract_first_json_object(s: &str) -> Option<Value> {
     let start = s.find('{')?;
     let mut depth = 0usize;
