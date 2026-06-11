@@ -9,6 +9,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -592,7 +593,12 @@ impl Adapter {
         }
     }
 
-    pub async fn handle_session_prompt(&mut self, id: Value, params: &Value) -> Vec<String> {
+    pub async fn handle_session_prompt(
+        &mut self,
+        id: Value,
+        params: &Value,
+        cancelled: Arc<AtomicBool>,
+    ) -> Vec<String> {
         let session_id = params
             .get("sessionId")
             .and_then(|v| v.as_str())
@@ -652,7 +658,7 @@ impl Adapter {
             .stderr(std::process::Stdio::piped())
             .spawn();
 
-        let child = match spawn_result {
+        let mut child = match spawn_result {
             Ok(child) => child,
             Err(e) => {
                 return vec![serde_json::to_string(&JsonRpcResponse {
@@ -664,6 +670,24 @@ impl Adapter {
                 .unwrap()];
             }
         };
+
+        let mut stdout = child.stdout.take();
+        let stdout_reader = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            if let Some(mut stdout) = stdout.take() {
+                let _ = stdout.read_to_end(&mut buf).await;
+            }
+            buf
+        });
+
+        let mut stderr = child.stderr.take();
+        let stderr_reader = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            if let Some(mut stderr) = stderr.take() {
+                let _ = stderr.read_to_end(&mut buf).await;
+            }
+            buf
+        });
 
         let initial_conv_id = self
             .sessions
@@ -707,7 +731,21 @@ impl Adapter {
             }
         });
 
-        let result = child.wait_with_output().await;
+        let mut was_cancelled = false;
+        let result = tokio::select! {
+            result = child.wait() => result,
+            _ = async {
+                while !cancelled.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            } => {
+                was_cancelled = true;
+                let _ = child.kill().await;
+                child.wait().await
+            }
+        };
+        let _ = stdout_reader.await;
+        let stderr_bytes = stderr_reader.await.unwrap_or_default();
         stop_polling.store(true, Ordering::SeqCst);
         let _ = poller.join();
 
@@ -760,26 +798,31 @@ impl Adapter {
             );
         }
 
+        let stop_reason = if was_cancelled {
+            "cancelled"
+        } else {
+            "end_turn"
+        };
         let output_lines = vec![serde_json::to_string(&JsonRpcResponse {
             jsonrpc: "2.0",
             id: id.clone(),
-            result: Some(json!({ "stopReason": "end_turn" })),
+            result: Some(json!({ "stopReason": stop_reason })),
             error: None,
         })
         .unwrap()];
 
         match result {
-            Ok(output) => {
-                let stderr_text = String::from_utf8_lossy(&output.stderr);
+            Ok(status) => {
+                let stderr_text = String::from_utf8_lossy(&stderr_bytes);
                 if !stderr_text.is_empty() {
                     eprintln!("[agy-acp] agy stderr: {}", stderr_text.trim_end());
                 }
 
-                if !output.status.success() {
-                    eprintln!("[agy-acp] WARN: agy exited with status: {}", output.status);
+                if !was_cancelled && !status.success() {
+                    eprintln!("[agy-acp] WARN: agy exited with status: {}", status);
                     if !had_updates {
                         let msg = if stderr_text.is_empty() {
-                            format!("agy exited with status: {}", output.status)
+                            format!("agy exited with status: {}", status)
                         } else {
                             format!("agy failed: {}", stderr_text.trim_end())
                         };
