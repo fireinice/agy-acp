@@ -707,6 +707,7 @@ impl Adapter {
             last_step_idx: initial_step_idx,
             had_updates: false,
             agent_text_lengths: HashMap::new(),
+            thought_text_lengths: HashMap::new(),
             emitted_tool_steps: HashSet::new(),
             last_title: None,
             skip_naration: self.skip_naration,

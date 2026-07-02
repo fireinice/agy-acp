@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::adapter::{filter_narration, Adapter};
 use crate::protobuf::{
-    extract_text_from_step_payload, extract_title_from_step_payload, extract_tool_name,
-    extract_tool_update_from_step_payload, extract_user_text_from_step_payload, is_tool_step_type,
-    read_varint,
+    extract_text_from_step_payload, extract_thought_from_step_payload,
+    extract_title_from_step_payload, extract_tool_name, extract_tool_update_from_step_payload,
+    extract_user_text_from_step_payload, is_tool_step_type, read_varint,
 };
 use crate::Cli;
 use clap::Parser;
@@ -123,6 +123,29 @@ fn test_extract_text_from_step_payload_field20_field1() {
 fn test_extract_text_returns_none_without_field20() {
     let blob = vec![0x08, 0x03];
     assert_eq!(extract_text_from_step_payload(&blob), None);
+}
+
+#[test]
+fn test_extract_thought_from_step_payload_field20_field3() {
+    let mut inner = Vec::new();
+    push_len_field(&mut inner, 1, b"I will inspect the script.");
+    push_len_field(
+        &mut inner,
+        3,
+        b"**Analyzing Container Startup**\nI need to verify how the container reuse check works.",
+    );
+
+    let mut blob = Vec::new();
+    push_varint_field(&mut blob, 1, 15);
+    push_len_field(&mut blob, 20, &inner);
+
+    assert_eq!(
+        extract_thought_from_step_payload(&blob),
+        Some(
+            "**Analyzing Container Startup**\nI need to verify how the container reuse check works."
+                .to_string()
+        )
+    );
 }
 
 #[test]
@@ -296,15 +319,10 @@ fn test_extract_tool_update_maps_reasoning_to_think_content() {
     "#;
 
     let update = extract_tool_update_from_step_payload(21, 17, payload).unwrap();
-    assert_eq!(update["sessionUpdate"], "tool_call");
-    assert_eq!(update["toolCallId"], "agy-21-17");
-    assert_eq!(update["title"], "Reasoning");
-    assert_eq!(update["kind"], "think");
-    assert_eq!(update["status"], "completed");
-    assert_eq!(update["content"][0]["type"], "content");
-    assert_eq!(update["content"][0]["content"]["type"], "text");
+    assert_eq!(update["sessionUpdate"], "agent_thought_chunk");
+    assert_eq!(update["content"]["type"], "text");
     assert_eq!(
-        update["content"][0]["content"]["text"],
+        update["content"]["text"],
         "Need to inspect the protocol before changing serialization."
     );
 }
@@ -347,7 +365,11 @@ fn test_extract_tool_update_formats_structured_grep_hits_without_text_output() {
     let mut hit = Vec::new();
     push_len_field(&mut hit, 1, b"src/protobuf.rs");
     push_varint_field(&mut hit, 2, 42);
-    push_len_field(&mut hit, 3, b"fn parse_tool_result(blob: &[u8]) -> Option<Value> {");
+    push_len_field(
+        &mut hit,
+        3,
+        b"fn parse_tool_result(blob: &[u8]) -> Option<Value> {",
+    );
 
     let mut grep = Vec::new();
     push_len_field(&mut grep, 1, b"parse_tool_result");
@@ -376,14 +398,26 @@ fn test_extract_tool_update_from_structured_view_payload() {
     push_len_field(&mut view, 4, b"pub fn read_varint() {}\n```");
     push_varint_field(&mut view, 11, 13);
     push_varint_field(&mut view, 12, 200);
-    let payload = make_tool_payload("view-call", "view_file", "{}", "Viewing file", Some((14, view)));
+    let payload = make_tool_payload(
+        "view-call",
+        "view_file",
+        "{}",
+        "Viewing file",
+        Some((14, view)),
+    );
 
     let update = extract_tool_update_from_step_payload(23, 8, &payload).unwrap();
     assert_eq!(update["title"], "Viewing file");
     assert_eq!(update["kind"], "read");
-    assert_eq!(update["rawOutput"]["fileUri"], "file:///tmp/project/src/protobuf.rs");
+    assert_eq!(
+        update["rawOutput"]["fileUri"],
+        "file:///tmp/project/src/protobuf.rs"
+    );
     assert_eq!(update["rawOutput"]["startLine"], 10);
-    assert_eq!(update["locations"][0]["path"], "file:///tmp/project/src/protobuf.rs");
+    assert_eq!(
+        update["locations"][0]["path"],
+        "file:///tmp/project/src/protobuf.rs"
+    );
     assert_eq!(update["locations"][0]["line"], 10);
     assert_eq!(
         update["content"][0]["content"]["text"],
@@ -401,7 +435,13 @@ fn test_extract_tool_update_from_structured_list_payload() {
     let mut list = Vec::new();
     push_len_field(&mut list, 1, b"file:///tmp/project");
     push_len_field(&mut list, 3, &entry);
-    let payload = make_tool_payload("list-call", "list_dir", "{}", "Listing directory", Some((15, list)));
+    let payload = make_tool_payload(
+        "list-call",
+        "list_dir",
+        "{}",
+        "Listing directory",
+        Some((15, list)),
+    );
 
     let update = extract_tool_update_from_step_payload(24, 9, &payload).unwrap();
     assert_eq!(update["title"], "Listing directory");
@@ -623,18 +663,25 @@ fn test_session_load_replays_conversation_history() {
     )
     .unwrap();
     conn.execute(
+        "INSERT INTO steps (idx, step_type, step_payload) VALUES (?1, 17, ?2)",
+        rusqlite::params![6i64, br#"thinking
+            {"thought":"I should verify the test output before summarizing.","toolSummary":"Analyzing test output"}"#
+            .as_slice()],
+    )
+    .unwrap();
+    conn.execute(
         "INSERT INTO steps (idx, step_type, step_payload) VALUES (?1, 15, ?2)",
-        rusqlite::params![6i64, make_assistant_payload("hello from agent")],
+        rusqlite::params![7i64, make_assistant_payload("hello from agent")],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO steps (idx, step_type, step_payload) VALUES (?1, 14, ?2)",
-        rusqlite::params![7i64, make_user_payload("how are you?")],
+        rusqlite::params![8i64, make_user_payload("how are you?")],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO steps (idx, step_type, step_payload) VALUES (?1, 15, ?2)",
-        rusqlite::params![8i64, make_assistant_payload("second response")],
+        rusqlite::params![9i64, make_assistant_payload("second response")],
     )
     .unwrap();
     drop(conn);
@@ -647,7 +694,7 @@ fn test_session_load_replays_conversation_history() {
         available_models: vec![],
         skip_naration: false,
     };
-    adapter.persist_session("sess-replay", Some("conv-replay"), 8, None);
+    adapter.persist_session("sess-replay", Some("conv-replay"), 9, None);
 
     let output = adapter.handle_session_load(json!(1), &json!({"sessionId": "sess-replay"}));
 
@@ -691,6 +738,7 @@ fn test_session_load_replays_conversation_history() {
             "tool_call",
             "tool_call",
             "tool_call",
+            "agent_thought_chunk",
             "agent_message_chunk",
             "user_message_chunk",
             "agent_message_chunk"
@@ -718,6 +766,7 @@ fn test_session_load_replays_conversation_history() {
         vec![
             "user_message_chunk",
             "agent_message_chunk",
+            "agent_thought_chunk",
             "agent_message_chunk",
             "user_message_chunk",
             "agent_message_chunk"
@@ -736,6 +785,7 @@ fn test_session_load_replays_conversation_history() {
         vec![
             "hello",
             "I will inspect the workspace.",
+            "I should verify the test output before summarizing.",
             "hello from agent",
             "how are you?",
             "second response"

@@ -64,6 +64,7 @@ pub struct StreamingState {
     pub last_step_idx: i64,
     pub had_updates: bool,
     pub agent_text_lengths: HashMap<i64, usize>,
+    pub thought_text_lengths: HashMap<i64, usize>,
     pub emitted_tool_steps: HashSet<i64>,
     pub last_title: Option<String>,
     pub skip_naration: bool,

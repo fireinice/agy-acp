@@ -130,6 +130,13 @@ pub fn extract_text_from_step_payload(blob: &[u8]) -> Option<String> {
     String::from_utf8(field_1).ok()
 }
 
+/// Extract streamed reasoning text from a step_payload protobuf:
+/// top-level field 20 (sub-message) → field 3 (string).
+pub fn extract_thought_from_step_payload(blob: &[u8]) -> Option<String> {
+    let field_20 = get_proto_field(blob, 20)?;
+    get_text_field(&field_20, 3).filter(|text| !text.trim().is_empty())
+}
+
 pub fn extract_user_text_from_step_payload(blob: &[u8]) -> Option<String> {
     let prompt = get_proto_field(blob, 19)?;
     get_text_field(&prompt, 2)
@@ -420,9 +427,9 @@ pub fn message_chunk_update(session_update: &str, text: String) -> Value {
     })
 }
 
-fn parse_tool_run(
-    blob: &[u8],
-) -> Option<(Option<String>, Option<String>, Option<Value>, Option<String>)> {
+type ParsedToolRun = (Option<String>, Option<String>, Option<Value>, Option<String>);
+
+fn parse_tool_run(blob: &[u8]) -> Option<ParsedToolRun> {
     get_varint_field(blob, 1)?;
     let tool = get_proto_field(blob, 5)?;
     let call = get_proto_field(&tool, 4);
@@ -535,7 +542,12 @@ fn parse_tool_result(blob: &[u8]) -> Option<Value> {
                     "fileSize": get_varint_field(&entry, 4).unwrap_or(0),
                 })
             })
-            .filter(|entry| entry["name"].as_str().map(|s| !s.is_empty()).unwrap_or(false))
+            .filter(|entry| {
+                entry["name"]
+                    .as_str()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+            })
             .collect();
         if !entries.is_empty() {
             out["entries"] = Value::Array(entries);
@@ -600,7 +612,27 @@ pub fn extract_tool_update_from_step_payload(
     let content = raw_output
         .as_ref()
         .and_then(|output| tool_content(output, true))
-        .or_else(|| raw_input.as_ref().and_then(|input| tool_content(input, false)));
+        .or_else(|| {
+            raw_input
+                .as_ref()
+                .and_then(|input| tool_content(input, false))
+        });
+
+    if kind == "think" {
+        let thought_text = raw_input
+            .as_ref()
+            .and_then(|input| tool_content(input, false))
+            .and_then(|content| content.get("content").cloned())
+            .and_then(|content| {
+                let content_type = content.get("type").and_then(|value| value.as_str());
+                let text = content.get("text").and_then(|value| value.as_str());
+                (content_type == Some("text")).then(|| text.map(String::from))?
+            });
+
+        if let Some(text) = thought_text.filter(|text| !text.trim().is_empty()) {
+            return Some(message_chunk_update("agent_thought_chunk", text));
+        }
+    }
 
     let mut update = json!({
         "sessionUpdate": "tool_call",

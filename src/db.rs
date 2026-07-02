@@ -5,8 +5,9 @@ use std::path::Path;
 
 use crate::adapter::filter_narration;
 use crate::protobuf::{
-    extract_text_from_step_payload, extract_tool_update_from_step_payload,
-    extract_user_text_from_step_payload, is_tool_step_type, message_chunk_update,
+    extract_text_from_step_payload, extract_thought_from_step_payload,
+    extract_tool_update_from_step_payload, extract_user_text_from_step_payload, is_tool_step_type,
+    message_chunk_update,
 };
 
 #[cfg(test)]
@@ -93,11 +94,13 @@ pub fn read_replay_updates_from_db(
     let mut max_idx = -1;
     let mut updates = Vec::new();
     let mut pending_agent_parts = Vec::new();
+    let mut pending_thought_parts = Vec::new();
 
     for (idx, step_type, payload) in &rows {
         max_idx = max_idx.max(*idx);
         if *step_type == 14 {
             flush_agent_message(&mut pending_agent_parts, &mut updates, skip_naration);
+            flush_thought_message(&mut pending_thought_parts, &mut updates);
             if let Some(text) = extract_user_text_from_step_payload(payload) {
                 updates.push(message_chunk_update("user_message_chunk", text));
             }
@@ -107,14 +110,19 @@ pub fn read_replay_updates_from_db(
                     pending_agent_parts.push(text);
                 }
             }
+            if let Some(text) = extract_thought_from_step_payload(payload) {
+                pending_thought_parts.push(text);
+            }
         } else if is_tool_step_type(*step_type) {
             flush_agent_message(&mut pending_agent_parts, &mut updates, skip_naration);
+            flush_thought_message(&mut pending_thought_parts, &mut updates);
             if let Some(update) = extract_tool_update_from_step_payload(*idx, *step_type, payload) {
                 updates.push(update);
             }
         }
     }
     flush_agent_message(&mut pending_agent_parts, &mut updates, skip_naration);
+    flush_thought_message(&mut pending_thought_parts, &mut updates);
 
     if updates.is_empty() {
         return None;
@@ -182,5 +190,16 @@ fn flush_agent_message(parts: &mut Vec<String>, updates: &mut Vec<Value>, skip_n
         if !text.is_empty() {
             updates.push(message_chunk_update("agent_message_chunk", text));
         }
+    }
+}
+
+fn flush_thought_message(parts: &mut Vec<String>, updates: &mut Vec<Value>) {
+    if parts.is_empty() {
+        return;
+    }
+    let text = parts.join("\n");
+    parts.clear();
+    if !text.is_empty() {
+        updates.push(message_chunk_update("agent_thought_chunk", text));
     }
 }

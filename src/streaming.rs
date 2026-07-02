@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use crate::adapter::is_narration;
 use crate::db::{new_conversation_id_in_dir, read_rows_from_db};
 use crate::protobuf::{
-    extract_text_from_step_payload, extract_title_from_step_payload,
-    extract_tool_update_from_step_payload, is_tool_step_type,
+    extract_text_from_step_payload, extract_thought_from_step_payload,
+    extract_title_from_step_payload, extract_tool_update_from_step_payload, is_tool_step_type,
 };
 use crate::types::{JsonRpcNotification, StreamingState};
 
@@ -42,36 +42,57 @@ pub fn poll_streaming_delta(
         guard.last_step_idx = guard.last_step_idx.max(idx);
 
         if step_type == 15 {
-            let Some(text) = extract_text_from_step_payload(&payload) else {
-                continue;
-            };
-            let written_len = guard.agent_text_lengths.get(&idx).copied().unwrap_or(0);
-            if text.len() <= written_len {
-                continue;
+            if let Some(text) = extract_text_from_step_payload(&payload) {
+                let written_len = guard.agent_text_lengths.get(&idx).copied().unwrap_or(0);
+                if text.len() > written_len {
+                    if guard.skip_naration && is_narration(&text) {
+                        guard.agent_text_lengths.insert(idx, text.len());
+                    } else if let Some(new_text) = text.get(written_len..) {
+                        guard.agent_text_lengths.insert(idx, text.len());
+                        if !new_text.is_empty() {
+                            notifications.push(
+                                serde_json::to_string(&JsonRpcNotification {
+                                    jsonrpc: "2.0",
+                                    method: "session/update".to_string(),
+                                    params: json!({
+                                        "sessionId": session_id,
+                                        "update": {
+                                            "sessionUpdate": "agent_message_chunk",
+                                            "content": { "type": "text", "text": new_text },
+                                        },
+                                    }),
+                                })
+                                .unwrap(),
+                            );
+                        }
+                    }
+                }
             }
-            if guard.skip_naration && is_narration(&text) {
-                guard.agent_text_lengths.insert(idx, text.len());
-                continue;
-            }
-            let Some(new_text) = text.get(written_len..) else {
-                continue;
-            };
-            guard.agent_text_lengths.insert(idx, text.len());
-            if !new_text.is_empty() {
-                notifications.push(
-                    serde_json::to_string(&JsonRpcNotification {
-                        jsonrpc: "2.0",
-                        method: "session/update".to_string(),
-                        params: json!({
-                            "sessionId": session_id,
-                            "update": {
-                                "sessionUpdate": "agent_message_chunk",
-                                "content": { "type": "text", "text": new_text },
-                            },
-                        }),
-                    })
-                    .unwrap(),
-                );
+
+            if let Some(thought) = extract_thought_from_step_payload(&payload) {
+                let written_len = guard.thought_text_lengths.get(&idx).copied().unwrap_or(0);
+                if thought.len() > written_len {
+                    let Some(new_text) = thought.get(written_len..) else {
+                        continue;
+                    };
+                    guard.thought_text_lengths.insert(idx, thought.len());
+                    if !new_text.is_empty() {
+                        notifications.push(
+                            serde_json::to_string(&JsonRpcNotification {
+                                jsonrpc: "2.0",
+                                method: "session/update".to_string(),
+                                params: json!({
+                                    "sessionId": session_id,
+                                    "update": {
+                                        "sessionUpdate": "agent_thought_chunk",
+                                        "content": { "type": "text", "text": new_text },
+                                    },
+                                }),
+                            })
+                            .unwrap(),
+                        );
+                    }
+                }
             }
         } else if step_type == 23 {
             let Some(title) = extract_title_from_step_payload(&payload) else {
