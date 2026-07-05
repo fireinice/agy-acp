@@ -325,7 +325,10 @@ impl Adapter {
         }
     }
 
-    pub fn handle_session_new(&mut self, id: Value) -> JsonRpcResponse {
+    pub fn handle_session_new(&mut self, id: Value, params: &Value) -> JsonRpcResponse {
+        if let Some(cwd) = params.get("cwd").and_then(|v| v.as_str()) {
+            self.working_dir = cwd.to_string();
+        }
         let session_id = Uuid::new_v4().to_string();
         self.evict_if_needed();
         self.sessions.insert(
@@ -654,12 +657,13 @@ impl Adapter {
         args.push(clean_prompt.to_string());
 
         let spawn_result = Command::new("agy")
-            .args(&args)
-            .current_dir(&self.working_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn();
+             .args(&args)
+             .current_dir(&self.working_dir)
+             .env("PWD", &self.working_dir)
+             .stdin(std::process::Stdio::null())
+             .stdout(std::process::Stdio::piped())
+             .stderr(std::process::Stdio::piped())
+             .spawn();
 
         let mut child = match spawn_result {
             Ok(child) => child,

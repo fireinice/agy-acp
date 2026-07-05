@@ -749,7 +749,7 @@ fn test_session_load_replays_conversation_history() {
         .filter(|notification| {
             matches!(
                 notification["params"]["update"]["sessionUpdate"].as_str(),
-                Some("user_message_chunk") | Some("agent_message_chunk")
+                Some("user_message_chunk") | Some("agent_message_chunk") | Some("agent_thought_chunk")
             )
         })
         .collect();
@@ -1116,7 +1116,7 @@ fn test_read_response_from_db() {
     };
 
     let result = adapter.read_response_from_db("test-conv", -1);
-    assert_eq!(result, Some(("hello world".to_string(), 1)));
+    assert_eq!(result, Some(("hello world".to_string(), 2)));
 
     let result = adapter.read_response_from_db("test-conv", 1);
     assert_eq!(result, None);
@@ -1673,7 +1673,7 @@ fn test_filter_narration_all_narration_drops_all() {
 #[test]
 fn test_session_new_returns_models() {
     let mut adapter = Adapter::new();
-    let response = adapter.handle_session_new(json!(1));
+    let response = adapter.handle_session_new(json!(1), &json!({}));
     let result = response.result.as_ref().unwrap();
     assert!(result.get("sessionId").is_some());
     let models = result.get("models").unwrap();
@@ -1689,9 +1689,35 @@ fn test_session_new_returns_models() {
 }
 
 #[test]
+fn test_session_new_with_cwd() {
+    let mut adapter = Adapter::new();
+    let original_cwd = adapter.working_dir.clone();
+    let target_cwd = "/dummy/path/for/cwd/test";
+    
+    let response = adapter.handle_session_new(json!(1), &json!({
+        "cwd": target_cwd
+    }));
+    assert!(response.result.is_some());
+    assert_eq!(adapter.working_dir, target_cwd);
+    assert_ne!(adapter.working_dir, original_cwd);
+}
+
+#[test]
+fn test_session_new_without_cwd() {
+    let mut adapter = Adapter::new();
+    let original_cwd = adapter.working_dir.clone();
+    
+    let response = adapter.handle_session_new(json!(1), &json!({
+        "other_param": "value"
+    }));
+    assert!(response.result.is_some());
+    assert_eq!(adapter.working_dir, original_cwd);
+}
+
+#[test]
 fn test_session_set_model() {
     let mut adapter = Adapter::new();
-    let new_resp = adapter.handle_session_new(json!(1));
+    let new_resp = adapter.handle_session_new(json!(1), &json!({}));
     let session_id = new_resp.result.as_ref().unwrap()["sessionId"]
         .as_str()
         .unwrap()
@@ -1736,7 +1762,7 @@ fn test_session_set_model_unknown_session() {
 fn test_session_set_config_option_sets_model() {
     let mut adapter = Adapter::new();
     adapter.available_models = vec!["Model A".to_string(), "Model B".to_string()];
-    let new_resp = adapter.handle_session_new(json!(1));
+    let new_resp = adapter.handle_session_new(json!(1), &json!({}));
     let session_id = new_resp.result.as_ref().unwrap()["sessionId"]
         .as_str()
         .unwrap()
@@ -1766,7 +1792,7 @@ fn test_session_set_config_option_sets_model() {
 #[test]
 fn test_session_set_config_option_rejects_unknown_config() {
     let mut adapter = Adapter::new();
-    let new_resp = adapter.handle_session_new(json!(1));
+    let new_resp = adapter.handle_session_new(json!(1), &json!({}));
     let session_id = new_resp.result.as_ref().unwrap()["sessionId"]
         .as_str()
         .unwrap()
