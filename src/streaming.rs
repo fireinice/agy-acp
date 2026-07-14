@@ -20,8 +20,13 @@ pub fn poll_streaming_delta(
     let (conversation_id, base_step_idx) = {
         let mut guard = state.lock().unwrap();
         if guard.conversation_id.is_none() {
-            if let Some(before) = snapshot {
-                guard.conversation_id = new_conversation_id_in_dir(conversations_dir, before);
+            if let Some(pid) = guard.child_pid {
+                guard.conversation_id = crate::db::find_conversation_id_by_pid(pid, conversations_dir);
+            }
+            if guard.conversation_id.is_none() {
+                if let Some(before) = snapshot {
+                    guard.conversation_id = new_conversation_id_in_dir(conversations_dir, before);
+                }
             }
         }
         (guard.conversation_id.clone(), guard.base_step_idx)

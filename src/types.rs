@@ -67,4 +67,5 @@ pub struct StreamingState {
     pub emitted_tool_steps: HashSet<i64>,
     pub last_title: Option<String>,
     pub skip_naration: bool,
+    pub child_pid: Option<u32>,
 }
