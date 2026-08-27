@@ -326,6 +326,40 @@ fn test_extract_tool_update_from_bash_tool() {
 }
 
 #[test]
+fn test_extract_tool_update_reads_cwd_location_for_run_command() {
+    let payload = br#"
+        run_command
+        {"CommandLine":"cargo test","Cwd":"/tmp/project","toolAction":"Running tests","toolSummary":"Run cargo test"}
+    "#;
+
+    let update = extract_tool_update_from_step_payload(10, 21, payload).unwrap();
+    assert_eq!(update["locations"][0]["path"], "/tmp/project");
+}
+
+#[test]
+fn test_extract_tool_update_reads_directory_path_location() {
+    let payload = br#"
+        list_dir
+        {"DirectoryPath":"/tmp/project/src","toolAction":"Listing src directory","toolSummary":"List src directory"}
+    "#;
+
+    let update = extract_tool_update_from_step_payload(11, 8, payload).unwrap();
+    assert_eq!(update["kind"], "read");
+    assert_eq!(update["locations"][0]["path"], "/tmp/project/src");
+}
+
+#[test]
+fn test_extract_tool_update_reads_message_key_for_content() {
+    let payload = br#"
+        run_mcp_tool
+        {"status":"success","message":"Task started","toolAction":"Starting task","toolSummary":"Start background task"}
+    "#;
+
+    let update = extract_tool_update_from_step_payload(12, 33, payload).unwrap();
+    assert_eq!(update["content"][0]["content"]["text"], "Task started");
+}
+
+#[test]
 fn test_extract_tool_update_from_web_search_step() {
     let payload = br#"
         search_web

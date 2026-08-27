@@ -293,6 +293,7 @@ pub fn tool_content(input: &Value, code_block: bool) -> Option<Value> {
         "textOutput",
         "content",
         "summary",
+        "message",
     ] {
         if let Some(text) = input.get(key).and_then(|v| v.as_str()) {
             if !text.trim().is_empty() {
@@ -397,6 +398,7 @@ pub fn tool_locations(input: &Value) -> Vec<Value> {
     let mut locations = Vec::new();
     for key in [
         "AbsolutePath",
+        "DirectoryPath",
         "SearchPath",
         "path",
         "file",
@@ -404,6 +406,7 @@ pub fn tool_locations(input: &Value) -> Vec<Value> {
         "fileUri",
         "dirUri",
         "cwdUri",
+        "Cwd",
     ] {
         if let Some(path) = input.get(key).and_then(|v| v.as_str()) {
             let mut loc = json!({ "path": path });
