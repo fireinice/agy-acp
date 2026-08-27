@@ -57,13 +57,7 @@ impl Adapter {
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .map(|l| l.trim().to_string())
-                    .filter(|l| !l.is_empty())
-                    .collect()
-            })
+            .map(|o| parse_available_models(&String::from_utf8_lossy(&o.stdout)))
             .unwrap_or_default()
     }
 
@@ -1025,6 +1019,32 @@ impl Adapter {
 
         output_lines
     }
+}
+
+/// Parse `agy models` stdout into display names.
+///
+/// Each model line is `slug<TAB>Display Name`. ACP clients show `modelId` and
+/// `name` side by side, so we keep only the display name and skip status lines
+/// like "Fetching available models...".
+pub fn parse_available_models(stdout: &str) -> Vec<String> {
+    stdout.lines().filter_map(parse_model_line).collect()
+}
+
+fn parse_model_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if let Some((_, name)) = line.split_once('\t') {
+        let name = name.trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if line.ends_with("...") {
+        return None;
+    }
+    Some(line.to_string())
 }
 
 /// Filter out leading narration ("I will ...", "I'll ...") from response parts.

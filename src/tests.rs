@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::adapter::{filter_narration, Adapter};
+use crate::adapter::{filter_narration, parse_available_models, Adapter};
 use crate::protobuf::{
     extract_text_from_step_payload, extract_thought_from_step_payload,
     extract_title_from_step_payload, extract_tool_name, extract_tool_update_from_step_payload,
@@ -54,6 +54,37 @@ fn test_parse_skip_naration_flag() {
     );
     assert!(!Cli::try_parse_from(["agy-acp"]).unwrap().skip_naration);
     assert!(Cli::try_parse_from(["agy-acp", "--skip-narration"]).is_err());
+}
+
+#[test]
+fn test_parse_available_models_keeps_display_names_only() {
+    let stdout = "\
+Fetching available models...
+gemini-3.6-flash-high\tGemini 3.6 Flash (High)
+gemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)
+gemini-3.6-flash-low\tGemini 3.6 Flash (Low)
+claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)
+
+";
+    assert_eq!(
+        parse_available_models(stdout),
+        vec![
+            "Gemini 3.6 Flash (High)",
+            "Gemini 3.6 Flash (Medium)",
+            "Gemini 3.6 Flash (Low)",
+            "Claude Sonnet 4.6 (Thinking)",
+        ]
+    );
+}
+
+#[test]
+fn test_parse_available_models_skips_blank_and_status_lines() {
+    assert!(parse_available_models("").is_empty());
+    assert!(parse_available_models("Fetching available models...\n\n").is_empty());
+    assert_eq!(
+        parse_available_models("Gemini 3.1 Pro (High)\n"),
+        vec!["Gemini 3.1 Pro (High)"]
+    );
 }
 
 fn make_user_payload(text: &str) -> Vec<u8> {
