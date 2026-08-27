@@ -2150,7 +2150,7 @@ fn test_handle_session_new_with_directories() {
 
     let params = json!({
         "cwd": "/new/workspace/cwd",
-        "additional_directories": [
+        "additionalDirectories": [
             "/path/to/dep1",
             "/path/to/dep2"
         ]
@@ -2167,6 +2167,34 @@ fn test_handle_session_new_with_directories() {
             "/path/to/dep1".to_string(),
             "/path/to/dep2".to_string()
         ]
+    );
+}
+
+/// ACP's `session/new` uses camelCase (`additionalDirectories`); the snake_case
+/// spelling is kept as a fallback for older callers/tests.
+#[test]
+fn test_handle_session_new_falls_back_to_snake_case_directories() {
+    let mut adapter = Adapter {
+        sessions: HashMap::new(),
+        working_dir: "/default/workdir".to_string(),
+        conversations_dir: PathBuf::from("/tmp/convs"),
+        state_file: PathBuf::from("/tmp/state.json"),
+        available_models: vec![],
+        skip_naration: false,
+    };
+
+    let params = json!({
+        "cwd": "/new/workspace/cwd",
+        "additional_directories": [
+            "/path/to/dep1"
+        ]
+    });
+
+    let _resp = adapter.handle_session_new(json!(1), &params);
+    let session = adapter.sessions.values().next().unwrap();
+    assert_eq!(
+        session.additional_directories,
+        vec!["/path/to/dep1".to_string()]
     );
 }
 

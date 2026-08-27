@@ -374,7 +374,11 @@ impl Adapter {
             self.working_dir = cwd.to_string();
             cwd_opt = Some(cwd.to_string());
         }
-        let additional_dirs = if let Some(arr) = params.get("additional_directories").and_then(|v| v.as_array()) {
+        let additional_dirs = if let Some(arr) = params
+            .get("additionalDirectories")
+            .or_else(|| params.get("additional_directories"))
+            .and_then(|v| v.as_array())
+        {
             arr.iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect::<Vec<String>>()
