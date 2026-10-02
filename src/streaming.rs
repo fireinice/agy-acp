@@ -21,7 +21,7 @@ pub fn poll_streaming_delta(
         let mut guard = state.lock().unwrap();
         if guard.conversation_id.is_none() {
             if let Some(pid) = guard.child_pid {
-                guard.conversation_id = crate::db::find_conversation_id_by_pid(pid, conversations_dir);
+                guard.conversation_id = crate::db::find_conversation_id_by_pid(pid, conversations_dir, snapshot);
             }
             if guard.conversation_id.is_none() {
                 if let Some(before) = snapshot {

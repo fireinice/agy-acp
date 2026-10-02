@@ -1084,6 +1084,65 @@ fn test_snapshot_detects_db_conversations() {
 
 #[test]
 #[ignore]
+fn test_snapshot_ignores_conversation_summaries_and_hidden() {
+    let root = std::env::temp_dir().join(format!("agy-acp-summaries-{}", Uuid::new_v4()));
+    let conv_dir = root.join("conversations");
+    fs::create_dir_all(&conv_dir).unwrap();
+    fs::write(conv_dir.join("conversation_summaries.db"), b"summaries").unwrap();
+    fs::write(conv_dir.join(".hidden.db"), b"hidden").unwrap();
+    fs::write(conv_dir.join("valid-conv.db"), b"valid").unwrap();
+
+    let adapter = Adapter {
+        sessions: HashMap::new(),
+        working_dir: root.to_string_lossy().to_string(),
+        conversations_dir: conv_dir.clone(),
+        state_file: root.join("sessions.json"),
+        available_models: vec![],
+        skip_naration: false,
+    };
+
+    let snapshot = adapter.conversation_snapshot();
+    assert!(!snapshot.contains("conversation_summaries"));
+    assert!(!snapshot.contains(".hidden"));
+    assert!(snapshot.contains("valid-conv"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+#[ignore]
+fn test_find_conversation_id_by_pid_filters_snapshot_and_readonly() {
+    let root = std::env::temp_dir().join(format!("agy-acp-pid-test-{}", Uuid::new_v4()));
+    let conv_dir = root.join("conversations");
+    fs::create_dir_all(&conv_dir).unwrap();
+
+    let old_db = conv_dir.join("old-conv.db");
+    fs::write(&old_db, b"old").unwrap();
+    let ro_db = conv_dir.join("readonly-conv.db");
+    fs::write(&ro_db, b"ro").unwrap();
+    let new_db = conv_dir.join("new-conv.db");
+    fs::write(&new_db, b"new").unwrap();
+    let sum_db = conv_dir.join("conversation_summaries.db");
+    fs::write(&sum_db, b"sum").unwrap();
+
+    let mut before = std::collections::HashSet::new();
+    before.insert("old-conv".to_string());
+
+    // Open old_db in read-write mode, ro_db in read-only mode, sum_db in read-write mode, new_db in read-write mode
+    let _old_file = fs::OpenOptions::new().read(true).write(true).open(&old_db).unwrap();
+    let _ro_file = fs::OpenOptions::new().read(true).open(&ro_db).unwrap();
+    let _sum_file = fs::OpenOptions::new().read(true).write(true).open(&sum_db).unwrap();
+    let _new_file = fs::OpenOptions::new().read(true).write(true).open(&new_db).unwrap();
+
+    let pid = std::process::id();
+    let found = crate::db::find_conversation_id_by_pid(pid, &conv_dir, Some(&before));
+    assert_eq!(found, Some("new-conv".to_string()));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+#[ignore]
 fn test_snapshot_ignores_multiple_new_files() {
     let root = std::env::temp_dir().join(format!("agy-acp-multi-{}", Uuid::new_v4()));
     let conv_dir = root.join("conversations");

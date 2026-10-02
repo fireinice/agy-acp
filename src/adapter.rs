@@ -250,7 +250,12 @@ impl Adapter {
             .filter_map(|e| {
                 let path = e.path();
                 if path.extension().map(|x| x == "db").unwrap_or(false) {
-                    path.file_stem().map(|s| s.to_string_lossy().to_string())
+                    let stem = path.file_stem()?.to_string_lossy().to_string();
+                    if stem == "conversation_summaries" || stem.starts_with('.') {
+                        None
+                    } else {
+                        Some(stem)
+                    }
                 } else {
                     None
                 }

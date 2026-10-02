@@ -25,7 +25,12 @@ pub fn new_conversation_id_in_dir(
         .filter_map(|e| {
             let path = e.path();
             if path.extension().map(|x| x == "db").unwrap_or(false) {
-                path.file_stem().map(|s| s.to_string_lossy().to_string())
+                let stem = path.file_stem()?.to_string_lossy().to_string();
+                if stem == "conversation_summaries" || stem.starts_with('.') {
+                    None
+                } else {
+                    Some(stem)
+                }
             } else {
                 None
             }
@@ -48,6 +53,7 @@ pub fn new_conversation_id_in_dir(
 pub fn find_conversation_id_by_pid(
     pid: u32,
     conversations_dir: &Path,
+    before: Option<&HashSet<String>>,
 ) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -55,13 +61,27 @@ pub fn find_conversation_id_by_pid(
         if let Ok(entries) = std::fs::read_dir(fd_dir) {
             let conversations_dir_canonical = conversations_dir.canonicalize().unwrap_or_else(|_| conversations_dir.to_path_buf());
             for entry in entries.filter_map(|e| e.ok()) {
+                let file_name = entry.file_name();
+                let fd_str = file_name.to_string_lossy();
                 if let Ok(target) = std::fs::read_link(entry.path()) {
                     if target.extension().map(|ext| ext == "db").unwrap_or(false) {
                         if let Some(parent) = target.parent() {
                             let target_parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
                             if target_parent == conversations_dir_canonical {
-                                if let Some(stem) = target.file_stem() {
-                                    return Some(stem.to_string_lossy().to_string());
+                                if let Some(stem) = target.file_stem().and_then(|s| s.to_str()) {
+                                    if stem == "conversation_summaries" || stem.starts_with('.') {
+                                        continue;
+                                    }
+                                    if let Some(before_set) = before {
+                                        if before_set.contains(stem) {
+                                            continue;
+                                        }
+                                    }
+                                    // Check that fd is opened in read-write or write mode (not read-only)
+                                    if !is_linux_fd_writable(pid, &fd_str) {
+                                        continue;
+                                    }
+                                    return Some(stem.to_string());
                                 }
                             }
                         }
@@ -74,22 +94,37 @@ pub fn find_conversation_id_by_pid(
     #[cfg(target_os = "macos")]
     {
         if let Ok(output) = std::process::Command::new("lsof")
-            .args(&["-p", &pid.to_string(), "-Fn"])
+            .args(&["-p", &pid.to_string(), "-Fafn"])
             .output()
         {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let conversations_dir_canonical = conversations_dir.canonicalize().unwrap_or_else(|_| conversations_dir.to_path_buf());
+                let mut is_writable = false;
                 for line in stdout.lines() {
-                    if line.starts_with('n') {
+                    if line.starts_with('a') {
+                        let mode = &line[1..];
+                        is_writable = mode.contains('w') || mode.contains('u');
+                    } else if line.starts_with('n') {
                         let path_str = &line[1..];
                         let path = Path::new(path_str);
                         if path.extension().map(|ext| ext == "db").unwrap_or(false) {
                             if let Some(parent) = path.parent() {
                                 let target_parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
                                 if target_parent == conversations_dir_canonical {
-                                    if let Some(stem) = path.file_stem() {
-                                        return Some(stem.to_string_lossy().to_string());
+                                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                        if stem == "conversation_summaries" || stem.starts_with('.') {
+                                            continue;
+                                        }
+                                        if let Some(before_set) = before {
+                                            if before_set.contains(stem) {
+                                                continue;
+                                            }
+                                        }
+                                        if !is_writable {
+                                            continue;
+                                        }
+                                        return Some(stem.to_string());
                                     }
                                 }
                             }
@@ -101,6 +136,23 @@ pub fn find_conversation_id_by_pid(
     }
 
     None
+}
+
+#[cfg(target_os = "linux")]
+fn is_linux_fd_writable(pid: u32, fd_str: &str) -> bool {
+    let fdinfo_path = format!("/proc/{}/fdinfo/{}", pid, fd_str);
+    if let Ok(content) = std::fs::read_to_string(fdinfo_path) {
+        for line in content.lines() {
+            if let Some(flags_str) = line.strip_prefix("flags:") {
+                let trimmed = flags_str.trim();
+                if let Ok(flags) = usize::from_str_radix(trimmed, 8) {
+                    // O_ACCMODE is 0b11 (3). O_RDONLY is 0, O_WRONLY is 1, O_RDWR is 2.
+                    return (flags & 3) != 0;
+                }
+            }
+        }
+    }
+    true
 }
 
 pub fn read_rows_from_db(
